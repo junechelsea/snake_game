@@ -1,39 +1,454 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gemini Conversational Voice App</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neo-Grid Cityscape Snake</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
     <style>
-      body {
-        font-family: 'Orbitron', sans-serif;
-        -webkit-tap-highlight-color: transparent;
-      }
-      .glow-shadow {
-        box-shadow: 0 0 8px rgba(0, 255, 255, 0.4), 0 0 20px rgba(0, 255, 255, 0.3), 0 0 40px rgba(0, 255, 255, 0.2);
-      }
-      .text-glow {
-        text-shadow: 0 0 5px rgba(0, 255, 255, 0.7), 0 0 10px rgba(0, 255, 255, 0.5);
-      }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Orbitron', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+        }
+        .text-glow {
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.7), 0 0 16px rgba(0, 255, 255, 0.5);
+        }
+        .btn-glow {
+            box-shadow: 0 0 8px rgba(0, 255, 255, 0.4), 0 0 20px rgba(0, 255, 255, 0.3);
+        }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.1",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
-  }
-}
-</script>
 </head>
-<body class="bg-gray-900 text-gray-100 antialiased">
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+<body>
+    <div id="ui-container" class="absolute top-0 left-0 w-full p-4 text-cyan-300 pointer-events-none">
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold text-glow">SCORE: <span id="score">0</span></h1>
+            </div>
+            <button id="start-pause-btn" class="text-lg font-bold bg-cyan-800/50 border-2 border-cyan-400 rounded px-4 py-2 pointer-events-auto btn-glow hover:bg-cyan-700 transition-colors duration-300">
+                START
+            </button>
+        </div>
+    </div>
+     <div id="game-over-screen" class="hidden absolute inset-0 bg-black/70 flex-col justify-center items-center text-cyan-300">
+        <h2 class="text-6xl font-bold text-glow mb-4">GAME OVER</h2>
+        <h3 class="text-3xl mb-8">FINAL SCORE: <span id="final-score">0</span></h3>
+        <button id="restart-btn" class="text-2xl font-bold bg-cyan-800/50 border-2 border-cyan-400 rounded px-8 py-4 pointer-events-auto btn-glow hover:bg-cyan-700 transition-colors duration-300">
+            RESTART
+        </button>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "cannon-es": "https://unpkg.com/cannon-es@0.18.0/dist/cannon-es.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import * as CANNON from 'cannon-es';
+
+        // --- GAME CONSTANTS ---
+        const GRID_SIZE = 50;
+        const SNAKE_SPEED = 200; // ms per grid move
+        const LERP_FACTOR = 0.2;
+        const CAMERA_FOLLOW_FACTOR = 0.05;
+
+        // --- GAME STATE ---
+        let scene, camera, renderer, world;
+        let snake, food, city, lights;
+        let direction = new THREE.Vector2(1, 0);
+        let nextDirection = new THREE.Vector2(1, 0);
+        let score = 0;
+        let isGameRunning = false;
+        let isGameOver = false;
+        let gameLoopTimeout;
+        
+        const scoreEl = document.getElementById('score');
+        const startPauseBtn = document.getElementById('start-pause-btn');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const finalScoreEl = document.getElementById('final-score');
+        const restartBtn = document.getElementById('restart-btn');
+
+        // --- INITIALIZATION ---
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x000510, 50, 200);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // Physics World
+            world = new CANNON.World({
+                gravity: new CANNON.Vec3(0, -20, 0),
+            });
+            
+            // Setup
+            setupLights();
+            setupWorld();
+            setupSnake();
+            setupFood();
+            setupCity();
+            
+            resetGame();
+            
+            // Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            window.addEventListener('keydown', onKeyDown, false);
+            startPauseBtn.addEventListener('click', toggleGameState);
+            restartBtn.addEventListener('click', () => {
+                gameOverScreen.classList.add('hidden');
+                resetGame();
+            });
+        }
+
+        function resetGame() {
+            // Reset state
+            score = 0;
+            isGameOver = false;
+            direction.set(1, 0);
+            nextDirection.set(1, 0);
+            scoreEl.textContent = '0';
+            startPauseBtn.textContent = 'START';
+            startPauseBtn.disabled = false;
+            isGameRunning = false;
+            clearTimeout(gameLoopTimeout);
+            
+            // Reset snake
+            snake.reset();
+
+            // Reset camera
+            const headPos = snake.getHeadPosition();
+            camera.position.set(headPos.x, headPos.y + 15, headPos.z - 15);
+            camera.lookAt(headPos);
+
+            // Reset food
+            food.respawn(snake.segments.map(s => s.gridPosition));
+        }
+
+        // --- SETUP FUNCTIONS ---
+        function setupLights() {
+            const ambientLight = new THREE.AmbientLight(0x404080, 1);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0x80ffff, 1.5);
+            directionalLight.position.set(10, 30, 20);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+        }
+
+        function setupWorld() {
+            const groundMaterial = new THREE.MeshPhongMaterial({ color: 0x102040, shininess: 10 });
+            const groundGeometry = new THREE.PlaneGeometry(GRID_SIZE, GRID_SIZE);
+            const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+            groundMesh.rotation.x = -Math.PI / 2;
+            groundMesh.receiveShadow = true;
+            scene.add(groundMesh);
+
+            const groundBody = new CANNON.Body({
+                mass: 0, // static
+                shape: new CANNON.Plane(),
+                material: new CANNON.Material(),
+            });
+            groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+            world.addBody(groundBody);
+        }
+
+        function setupSnake() {
+            snake = {
+                segments: [],
+                headMaterial: new THREE.MeshBasicMaterial({ color: 0x00ff00 }),
+                bodyMaterial: new THREE.MeshBasicMaterial({ color: 0x00dd00 }),
+
+                init() {
+                    const head = this.createSegment(new THREE.Vector2(2, 0), true);
+                    const body1 = this.createSegment(new THREE.Vector2(1, 0));
+                    const body2 = this.createSegment(new THREE.Vector2(0, 0));
+                    this.segments = [head, body1, body2];
+                },
+                
+                reset() {
+                    this.segments.forEach(seg => scene.remove(seg.mesh));
+                    this.init();
+                },
+
+                createSegment(gridPos, isHead = false) {
+                    const geometry = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+                    const material = isHead ? this.headMaterial : this.bodyMaterial;
+                    const mesh = new THREE.Mesh(geometry, material);
+                    mesh.position.set(gridPos.x, 0.5, gridPos.y);
+                    mesh.castShadow = true;
+                    scene.add(mesh);
+                    return { mesh, gridPosition: gridPos.clone(), targetPosition: mesh.position.clone() };
+                },
+
+                move() {
+                    const head = this.segments[0];
+                    const newGridPos = head.gridPosition.clone().add(direction);
+                    
+                    // Check collisions
+                    if (this.checkWallCollision(newGridPos) || this.checkSelfCollision(newGridPos)) {
+                        endGame();
+                        return;
+                    }
+
+                    // Move body
+                    const tail = this.segments.pop();
+                    scene.remove(tail.mesh);
+                    
+                    const newHead = this.createSegment(newGridPos, true);
+                    this.segments.unshift(newHead);
+                    
+                    // Demote old head
+                    this.segments[1].mesh.material = this.bodyMaterial;
+
+                    // Update target positions for LERP
+                    for(let i = 0; i < this.segments.length; i++) {
+                        const seg = this.segments[i];
+                        seg.targetPosition.set(seg.gridPosition.x, 0.5, seg.gridPosition.y);
+                    }
+                },
+                
+                grow() {
+                    const tail = this.segments[this.segments.length - 1];
+                    const newSegment = this.createSegment(tail.gridPosition.clone()); // will be updated next move
+                    this.segments.push(newSegment);
+                    score++;
+                    scoreEl.textContent = score;
+                },
+
+                getHeadPosition() {
+                    return this.segments[0].mesh.position;
+                },
+
+                checkWallCollision(pos) {
+                    const halfGrid = GRID_SIZE / 2;
+                    return pos.x >= halfGrid || pos.x < -halfGrid || pos.y >= halfGrid || pos.y < -halfGrid;
+                },
+
+                checkSelfCollision(pos) {
+                    // Check against all but the last segment (which will move)
+                    for (let i = 0; i < this.segments.length - 1; i++) {
+                        if (pos.equals(this.segments[i].gridPosition)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            };
+            snake.init();
+        }
+
+        function setupFood() {
+            food = {
+                mesh: null,
+                body: null,
+                material: new THREE.MeshBasicMaterial({ color: 0xff00ff }),
+                geometry: new THREE.IcosahedronGeometry(0.4, 0),
+
+                init() {
+                    this.mesh = new THREE.Mesh(this.geometry, this.material);
+                    this.body = new CANNON.Body({
+                        mass: 1,
+                        shape: new CANNON.Sphere(0.4),
+                        material: new CANNON.Material(),
+                    });
+                    scene.add(this.mesh);
+                    world.addBody(this.body);
+                },
+
+                respawn(snakePositions) {
+                    let newPos;
+                    let validPosition = false;
+                    const halfGrid = GRID_SIZE / 2 - 1;
+                    while(!validPosition) {
+                        newPos = new THREE.Vector2(
+                            Math.floor(THREE.MathUtils.randFloat(-halfGrid, halfGrid)),
+                            Math.floor(THREE.MathUtils.randFloat(-halfGrid, halfGrid))
+                        );
+                        validPosition = !snakePositions.some(p => p.equals(newPos));
+                    }
+                    
+                    this.body.position.set(newPos.x, 5, newPos.y); // Drop from above
+                    this.body.velocity.set(0, 0, 0);
+                    this.body.angularVelocity.set(0, 0, 0);
+                },
+
+                update() {
+                    if (this.mesh && this.body) {
+                        this.mesh.position.copy(this.body.position);
+                        this.mesh.quaternion.copy(this.body.quaternion);
+                    }
+                },
+                
+                flick() {
+                     const force = new CANNON.Vec3(
+                        Math.random() * 20 - 10, 
+                        15, 
+                        Math.random() * 20 - 10
+                    );
+                    const point = new CANNON.Vec3(0,0,0);
+                    this.body.applyImpulse(force, point);
+                }
+            };
+            food.init();
+        }
+
+        function setupCity() {
+            const cityContainer = new THREE.Group();
+            const buildingMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+            const buildingGeometry = new THREE.BoxGeometry(1, 1, 1);
+            const halfGrid = GRID_SIZE / 2;
+
+            for (let i = 0; i < 100; i++) {
+                const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+                const height = Math.random() * 40 + 10;
+                const size = Math.random() * 4 + 2;
+
+                building.scale.set(size, height, size);
+
+                const angle = Math.random() * Math.PI * 2;
+                const radius = halfGrid + 10 + Math.random() * 40;
+                
+                building.position.set(
+                    Math.cos(angle) * radius,
+                    height / 2,
+                    Math.sin(angle) * radius
+                );
+                cityContainer.add(building);
+            }
+            scene.add(cityContainer);
+        }
+
+        // --- GAME LOGIC ---
+
+        function toggleGameState() {
+            if (isGameOver) return;
+            isGameRunning = !isGameRunning;
+            if (isGameRunning) {
+                startPauseBtn.textContent = 'PAUSE';
+                gameTick();
+            } else {
+                startPauseBtn.textContent = 'RESUME';
+                clearTimeout(gameLoopTimeout);
+            }
+        }
+        
+        function endGame() {
+            isGameRunning = false;
+            isGameOver = true;
+            clearTimeout(gameLoopTimeout);
+            finalScoreEl.textContent = score;
+            gameOverScreen.classList.remove('hidden');
+            gameOverScreen.classList.add('flex');
+            startPauseBtn.disabled = true;
+        }
+
+        function gameTick() {
+            if (!isGameRunning) return;
+            
+            direction.copy(nextDirection);
+            snake.move();
+            
+            // Check for food collision
+            const headPos = snake.getHeadPosition();
+            const foodPos = food.mesh.position;
+            if(headPos.distanceTo(foodPos) < 1.0) {
+                snake.grow();
+                food.flick(); // Apply physics impulse
+                // Respawn after a short delay to let the flick be seen
+                setTimeout(() => food.respawn(snake.segments.map(s => s.gridPosition)), 100);
+            }
+            
+            if(!isGameOver) {
+               gameLoopTimeout = setTimeout(gameTick, SNAKE_SPEED);
+            }
+        }
+
+
+        // --- EVENT HANDLERS ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onKeyDown(event) {
+            if (!isGameRunning && !isGameOver) {
+                 toggleGameState();
+            }
+            
+            switch (event.key) {
+                case 'w':
+                case 'ArrowUp':
+                    if (direction.y === 0) nextDirection.set(0, 1);
+                    break;
+                case 's':
+                case 'ArrowDown':
+                    if (direction.y === 0) nextDirection.set(0, -1);
+                    break;
+                case 'a':
+                case 'ArrowLeft':
+                    if (direction.x === 0) nextDirection.set(-1, 0);
+                    break;
+                case 'd':
+                case 'ArrowRight':
+                    if (direction.x === 0) nextDirection.set(1, 0);
+                    break;
+            }
+        }
+
+        // --- RENDER LOOP ---
+        const clock = new THREE.Clock();
+        let cameraTarget = new THREE.Vector3();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            const deltaTime = clock.getDelta();
+
+            // Update physics
+            world.step(1 / 60, deltaTime, 3);
+            food.update();
+
+            // Smooth snake movement
+            snake.segments.forEach(seg => {
+                seg.mesh.position.lerp(seg.targetPosition, LERP_FACTOR);
+            });
+            
+            // Smooth camera follow
+            if (snake.segments.length > 0) {
+                const headPos = snake.getHeadPosition();
+                cameraTarget.lerp(headPos, CAMERA_FOLLOW_FACTOR);
+                
+                const idealOffset = new THREE.Vector3(-direction.x * 12, 15, -direction.y * 12);
+                const idealPosition = new THREE.Vector3().copy(headPos).add(idealOffset);
+
+                camera.position.lerp(idealPosition, CAMERA_FOLLOW_FACTOR);
+                camera.lookAt(cameraTarget);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        init();
+        animate();
+    </script>
 </body>
 </html>
