@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Gemini Conversational Voice App",
+  "description": "Have a real-time voice conversation with the Gemini 2.5 Native Audio API. This app showcases low-latency audio streaming, real-time transcription, and a dynamic audio visualizer.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
